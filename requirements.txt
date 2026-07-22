@@ -1,0 +1,7 @@
+django>=6.0.6
+django-cors-headers
+pdfplumber
+pandas
+reportlab
+requests
+openpyxl
