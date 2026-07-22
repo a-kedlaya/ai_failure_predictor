@@ -1,0 +1,29 @@
+name: CD Pipeline
+
+on:
+  workflow_run:
+    workflows: ["CI Pipeline"]
+    types:
+      - completed
+    branches: [main, master]
+
+jobs:
+  deploy:
+    name: Deploy to Render
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Deploy Backend
+        run: |
+          curl -s "${{ secrets.RENDER_BACKEND_DEPLOY_HOOK }}"
+        env:
+          RENDER_BACKEND_DEPLOY_HOOK: ${{ secrets.RENDER_BACKEND_DEPLOY_HOOK }}
+
+      - name: Deploy Frontend
+        run: |
+          curl -s "${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK }}"
+        env:
+          RENDER_FRONTEND_DEPLOY_HOOK: ${{ secrets.RENDER_FRONTEND_DEPLOY_HOOK }}
+
+      - name: Deployment Triggered
+        run: echo "Render deployments triggered successfully"
