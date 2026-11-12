@@ -92,6 +92,252 @@ def _normalize_team_records(team_data):
         if member["name"] or member["role"] or member["experience"] or member["skills"]:
             normalized.append(member)
     return normalized
+_REASONING_PLACEHOLDERS = {
+    "", "no reasoning generated", "no reasoning was returned.",
+    "no reasoning", "none", "n/a",
+}
+
+# Known technologies/frameworks for fallback skill extraction from PDF text
+_KNOWN_SKILLS = [
+    "React", "Angular", "Vue.js", "Next.js", "Svelte", "HTML", "CSS", "Tailwind CSS",
+    "JavaScript", "TypeScript", "Node.js", "Express.js", "NestJS",
+    "Python", "Django", "Flask", "FastAPI",
+    "Java", "Spring Boot", "Spring", "Hibernate",
+    "C#", ".NET", "ASP.NET",
+    "Go", "Rust", "Ruby", "Rails", "PHP", "Laravel",
+    "PostgreSQL", "MySQL", "MongoDB", "Redis", "Elasticsearch", "SQLite",
+    "DynamoDB", "Cassandra", "Oracle",
+    "Docker", "Kubernetes", "Terraform", "Ansible",
+    "AWS", "Azure", "GCP", "Heroku", "Vercel",
+    "Kafka", "RabbitMQ", "SQS",
+    "GraphQL", "REST", "gRPC",
+    "OAuth2", "JWT", "SAML",
+    "Git", "Jenkins", "GitHub Actions", "CircleCI", "GitLab CI",
+    "Prometheus", "Grafana", "Datadog",
+    "Nginx", "Apache", "HAProxy",
+    "Webpack", "Vite", "Babel",
+    "TensorFlow", "PyTorch", "Pandas", "NumPy", "Scikit-learn",
+    "Selenium", "Cypress", "Jest", "JUnit",
+    "Figma", "Storybook",
+    "Firebase", "Supabase",
+    "Stripe", "Twilio", "SendGrid",
+    "Celery", "Airflow", "Spark",
+    "Kotlin", "Swift", "Flutter", "React Native",
+    "S3", "EC2", "Lambda", "CloudFront",
+    "Microservices", "WebSocket",
+]
+
+def _extract_skills_from_text(text):
+    """Fallback: scan PDF text for known technology names."""
+    if not text:
+        return []
+    text_lower = text.lower()
+    found = []
+    for skill in _KNOWN_SKILLS:
+        pattern = r'\b' + re.escape(skill.lower()).replace(r'\.', r'\.?') + r'\b'
+        if re.search(pattern, text_lower):
+            found.append(skill)
+    return found
+
+def _is_placeholder_reasoning(text):
+    return not text or str(text).strip().lower() in _REASONING_PLACEHOLDERS
+
+def _generate_reasoning(report):
+    """Build detailed markdown reasoning from the structured report data."""
+    complexity = report.get("complexity", "UNKNOWN")
+    failure_prob = report.get("failureProbability", 0)
+    risk_level = report.get("riskLevel", complexity)
+    required_skills = report.get("requiredSkills", [])
+    available_skills = report.get("availableSkills", [])
+    missing_skills = report.get("missingSkills", [])
+    team_data = report.get("teamData", [])
+    recommendations = report.get("recommendations", [])
+    developers = report.get("developers", len(team_data))
+    avg_experience = report.get("avgExperience", 0)
+    deadline = report.get("deadline", "Not specified")
+
+    total_required = len(required_skills)
+    total_available = len(available_skills)
+    total_missing = len(missing_skills)
+    coverage_pct = round((total_available / total_required) * 100) if total_required else 0
+    gap_pct = 100 - coverage_pct
+
+    lines = []
+
+    # 1 — Executive Summary
+    lines.append("## 1. Executive Summary\n")
+    lines.append(
+        f"This project is classified as **{complexity}** complexity with a "
+        f"**{risk_level}** risk level and an estimated failure probability of "
+        f"**{failure_prob}%**. The projected timeline is **{deadline}**."
+    )
+    if total_missing:
+        lines.append(
+            f"The current team covers only **{coverage_pct}%** of the "
+            f"{total_required} required technical skills, leaving "
+            f"**{total_missing} critical skill gaps**."
+        )
+    lines.append("")
+
+    # 2 — Team Capacity vs Scope (matches frontend "capacity" filter)
+    lines.append("## 2. Team Capacity vs Scope Analysis\n")
+    lines.append(f"- **Team Size**: {developers} developer(s)")
+    lines.append(f"- **Average Experience**: {avg_experience} years")
+    lines.append(
+        f"- **Skill Coverage**: {total_available} of {total_required} "
+        f"required skills ({coverage_pct}%)"
+    )
+    if total_missing > total_required * 0.5:
+        lines.append(
+            f"- **Critical Skill Gaps**: {total_missing} of {total_required} "
+            f"required skills are missing ({gap_pct}% gap rate)"
+        )
+    elif total_missing:
+        lines.append(
+            f"- **Skill Gaps**: {total_missing} of {total_required} required "
+            f"skills are not covered by the current team"
+        )
+    if developers <= 2:
+        lines.append(
+            f"- **Understaffed Team**: Only {developers} developer(s) assigned "
+            f"to a {complexity.lower()}-complexity project"
+        )
+    if avg_experience < 3:
+        lines.append(
+            f"- **Limited Experience**: Average team experience of "
+            f"{avg_experience} years may be insufficient"
+        )
+    if failure_prob >= 75:
+        lines.append(
+            "- **High Failure Probability**: Immediate intervention required "
+            "to bring the project within acceptable risk thresholds"
+        )
+    lines.append("")
+    if team_data:
+        lines.append("| Name | Role | Experience | Skills |")
+        lines.append("|------|------|------------|--------|")
+        for m in team_data:
+            name = m.get("name") or "Unknown"
+            role = m.get("role") or "Unspecified"
+            exp = m.get("experience", 0)
+            sk = ", ".join(m.get("skills", [])) or "None listed"
+            lines.append(f"| {name} | {role} | {exp} yrs | {sk} |")
+        lines.append("")
+
+    # 3 — Skill Gap Analysis
+    lines.append("## 3. Skill Gap Analysis\n")
+    if missing_skills or available_skills:
+        lines.append("| Skill | Status | Impact |")
+        lines.append("|-------|--------|--------|")
+        for s in missing_skills:
+            lines.append(f"| {s} | Missing | Critical Gap |")
+        for s in available_skills:
+            lines.append(f"| {s} | Available | Covered |")
+        lines.append("")
+    else:
+        lines.append("No specific skill data available for gap analysis.\n")
+
+    # 4 — Recommended Team Structure (matches frontend "team structure" filter)
+    lines.append("## 4. Recommended Team Structure\n")
+    roles = {}
+    for skill in missing_skills:
+        sl = skill.lower()
+        if any(k in sl for k in ("react", "angular", "vue", "css", "html", "frontend", "typescript")):
+            roles.setdefault("Senior Frontend Developer", set()).add(skill)
+        elif any(k in sl for k in ("node", "django", "spring", "flask", "express", "api", "rest", "graphql", "python", "java")):
+            roles.setdefault("Senior Backend Developer", set()).add(skill)
+        elif any(k in sl for k in ("postgres", "mysql", "mongo", "redis", "elasticsearch", "database")):
+            roles.setdefault("Database Engineer", set()).add(skill)
+        elif any(k in sl for k in ("docker", "kubernetes", "terraform", "aws", "azure", "cloud", "devops", "ci", "cd")):
+            roles.setdefault("DevOps / Cloud Engineer", set()).add(skill)
+        elif any(k in sl for k in ("oauth", "jwt", "security", "encrypt", "auth", "access control")):
+            roles.setdefault("Security Engineer", set()).add(skill)
+        elif any(k in sl for k in ("rabbitmq", "kafka", "queue", "messaging")):
+            roles.setdefault("Integration Engineer", set()).add(skill)
+        elif any(k in sl for k in ("prometheus", "grafana", "monitor", "logging")):
+            roles.setdefault("SRE / Monitoring Engineer", set()).add(skill)
+        else:
+            roles.setdefault("Full-Stack Developer", set()).add(skill)
+    if roles:
+        lines.append("| Role | Key Skills | Priority |")
+        lines.append("|------|-----------|----------|")
+        for role, skills in roles.items():
+            lines.append(f"| {role} | {', '.join(sorted(skills))} | High |")
+    else:
+        lines.append("Current team covers all required roles.")
+    lines.append("")
+
+    # 5 — Executive Action Plan (matches frontend "action plan" filter)
+    lines.append("## 5. Executive Action Plan\n")
+    if recommendations:
+        for i, rec in enumerate(recommendations[:10], 1):
+            lines.append(f"{i}. {rec}")
+        next_num = min(len(recommendations), 10) + 1
+    else:
+        next_num = 1
+    lines.append(
+        f"{next_num}. **Immediate**: Address critical skill gaps through "
+        "hiring or contracting specialists"
+    )
+    if developers <= 3:
+        target = max(developers * 2, 5)
+        next_num += 1
+        lines.append(
+            f"{next_num}. **Short-term**: Scale team from {developers} to at "
+            f"least {target} developers to match project complexity"
+        )
+    next_num += 1
+    lines.append(f"{next_num}. **Ongoing**: Conduct weekly risk reviews and milestone assessments")
+    next_num += 1
+    lines.append(
+        f"{next_num}. **Strategic**: Implement cross-training programs for "
+        "key missing technologies"
+    )
+
+    return "\n".join(lines)
+
+
+def _enrich_reasoning(reasoning, report):
+    """Ensure reasoning string contains all 5 required analysis section topics."""
+    if _is_placeholder_reasoning(reasoning):
+        return _generate_reasoning(report)
+
+    reasoning_str = str(reasoning)
+    lower = reasoning_str.lower()
+
+    # Check if standard sections exist
+    has_summary = any(k in lower for k in ("executive summary", "overview", "project summary"))
+    has_capacity = any(k in lower for k in ("capacity", "scope", "workload"))
+    has_gap = any(k in lower for k in ("skill gap", "missing skills", "gap analysis"))
+    has_team = any(k in lower for k in ("team structure", "recommended team", "roles"))
+    has_action = any(k in lower for k in ("action plan", "recommendations", "mitigation"))
+
+    if has_summary and has_capacity and has_gap and has_team and has_action:
+        return reasoning_str
+
+    # Generate full report reasoning and append missing sections
+    full_generated = _generate_reasoning(report)
+    gen_parts = full_generated.split("## ")
+
+    appended = [reasoning_str]
+    for part in gen_parts:
+        if not part.strip():
+            continue
+        header_line = part.split("\n")[0].lower()
+        if ("executive summary" in header_line or "1." in header_line) and not has_summary:
+            appended.append("\n\n## " + part.strip())
+        elif ("capacity" in header_line or "2." in header_line) and not has_capacity:
+            appended.append("\n\n## " + part.strip())
+        elif ("skill gap" in header_line or "3." in header_line) and not has_gap:
+            appended.append("\n\n## " + part.strip())
+        elif ("team structure" in header_line or "4." in header_line) and not has_team:
+            appended.append("\n\n## " + part.strip())
+        elif ("action plan" in header_line or "5." in header_line) and not has_action:
+            appended.append("\n\n## " + part.strip())
+
+    return "".join(appended)
+
+
 def _report_cache_path():
     return os.path.join(settings.BASE_DIR, "predictor", "uploads", "last_report.json")
 def _save_last_report(report_payload):
@@ -129,9 +375,10 @@ def analyze_project(request):
             )[0].replace("_", " ").replace("-", " ").strip() or project_name
         extracted_text = ""
         if pdf_file:
+            pdf_file.seek(0)
             with pdfplumber.open(pdf_file) as pdf:
+                page_num = 0
                 for page_num, page in enumerate(pdf.pages, 1):
-                    # Extract main text with layout preservation
                     page_text = page.extract_text(
                         x_tolerance=3,
                         y_tolerance=3,
@@ -139,7 +386,6 @@ def analyze_project(request):
                     )
                     if page_text:
                         extracted_text += page_text + "\n"
-                    # Also extract tables from each page (often missed by extract_text)
                     tables = page.extract_tables()
                     for table in tables:
                         if not table:
@@ -152,6 +398,10 @@ def analyze_project(request):
                                 if row_text.strip():
                                     extracted_text += row_text + "\n"
         print(f"[DEBUG] Extracted {len(extracted_text)} chars from PDF ({page_num} pages)")
+        if not extracted_text.strip():
+            return JsonResponse({
+                "error": "Could not extract text from the PDF. The file may be scanned/image-based. Please use a text-based PDF."
+            }, status=400)
         team_data = []
         # Try new format first (team_json from form)
         if team_json_str:
@@ -187,6 +437,19 @@ def analyze_project(request):
             for member in team_data
         ])
         # Append skill-inference guidance so the AI analyzes use cases, not just the tech stack
+        reasoning_guidance = (
+            "\n\n---\n"
+            "AI REASONING INSTRUCTIONS:\n"
+            "You MUST populate the 'aiReasoning' field with a DETAILED markdown analysis "
+            "(at least 500 words) containing these sections:\n"
+            "## 1. Executive Summary — risk level, failure probability, complexity overview\n"
+            "## 2. Team Capacity vs Scope Analysis — team size, experience, skill coverage, risk factors\n"
+            "## 3. Skill Gap Analysis — markdown table: | Skill | Status | Impact |\n"
+            "## 4. Recommended Team Structure — table: | Role | Key Skills | Priority |\n"
+            "## 5. Executive Action Plan — prioritized immediate/short-term/long-term actions\n\n"
+            "CRITICAL: aiReasoning MUST be detailed markdown. NEVER return empty, "
+            "'No reasoning generated', or placeholder text.\n"
+        )
         skill_guidance = (
             "\n\n---\n"
             "SKILL ANALYSIS INSTRUCTIONS:\n"
@@ -215,6 +478,7 @@ def analyze_project(request):
             "=== BEGIN REQUIREMENTS DOCUMENT ===\n"
             + extracted_text
             + "\n=== END REQUIREMENTS DOCUMENT ===\n"
+            + reasoning_guidance
             + skill_guidance
         )
         payload = {
@@ -236,7 +500,7 @@ def analyze_project(request):
         print(f"[DEBUG] Sending payload to n8n with extracted_text length: {len(extracted_text)}, team records: {len(team_data)}")
         print(f"[DEBUG] First 500 chars of extracted text: {extracted_text[:500]}")
         response = requests.post(
-            "http://localhost:5678/webhook/project-analysis1",
+            "http://localhost:5678/webhook/f7ec5bd0-f0ab-49e6-a792-10df563a5e97",
             json=payload,
             timeout=120,
         )
@@ -248,11 +512,45 @@ def analyze_project(request):
                 "details": response.text,
             }, status=502)
         result = response.json()
+        # n8n may return an array; unwrap to the first item
+        if isinstance(result, list) and result:
+            result = result[0]
         if isinstance(result, dict):
             if isinstance(result.get("report"), dict):
                 result["report"]["teamData"] = team_data
             else:
                 result["teamData"] = team_data
+
+        report_obj = result.get("report", result) if isinstance(result, dict) else result
+
+        # Ensure aiReasoning is present and enriched with all 5 required section topics
+        if isinstance(report_obj, dict):
+            reasoning = report_obj.get("aiReasoning")
+            # Check alternative field names from n8n response
+            if _is_placeholder_reasoning(reasoning) and isinstance(result, dict):
+                for alt_key in ("output", "text", "reasoning", "analysis", "message"):
+                    candidate = result.get(alt_key)
+                    if isinstance(candidate, str) and len(candidate) > 80:
+                        reasoning = candidate
+                        break
+            reasoning = _enrich_reasoning(reasoning, report_obj)
+            report_obj["aiReasoning"] = reasoning
+
+            # Ensure requiredSkills is populated — fallback to PDF text extraction
+            required = report_obj.get("requiredSkills")
+            if not required or not isinstance(required, list) or len(required) == 0:
+                # Try alternative key names from n8n
+                for alt_key in ("required_skills", "skills", "technologies", "techStack"):
+                    candidate = report_obj.get(alt_key) or (result.get(alt_key) if isinstance(result, dict) else None)
+                    if isinstance(candidate, list) and len(candidate) > 0:
+                        required = candidate
+                        break
+                # Final fallback: extract skills from the raw PDF text
+                if not required or len(required) == 0:
+                    required = _extract_skills_from_text(extracted_text)
+                    print(f"[DEBUG] Fallback skill extraction found {len(required)} skills from PDF text")
+                report_obj["requiredSkills"] = required
+
         print(f"[DEBUG] Analysis successful, returning result")
         LAST_REPORT = {
             "report": result.get("report", result),
